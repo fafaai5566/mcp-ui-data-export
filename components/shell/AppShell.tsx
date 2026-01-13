@@ -7,6 +7,7 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable"
 import { Button } from "@/components/ui/button"
+import { PanelRightClose, PanelRightOpen } from "lucide-react"
 import { useMcpStore } from "@/lib/store/useMcpStore"
 
 import { ChatPanel } from "./ChatPanel"
@@ -22,7 +23,7 @@ export function AppShell() {
       <ResizablePanelGroup direction="horizontal" className="h-full w-full">
         {/* Left: Chat */}
         <ResizablePanel
-          defaultSize={32}
+          defaultSize={22}
           minSize={22}
           maxSize={55}
           className="min-w-[280px]"
@@ -47,10 +48,10 @@ export function AppShell() {
             <ResizableHandle withHandle />
 
             <ResizablePanel
-              defaultSize={20}
-              minSize={16}
+              defaultSize={14}
+              minSize={14}
               maxSize={28}
-              className="min-w-[260px]"
+              className="min-w-[220px]"
             >
               <div className="h-full relative">
                 <WorkflowPanel />
@@ -58,11 +59,12 @@ export function AppShell() {
                 {/* Optional: collapse button floating at top-right */}
                 <div className="absolute right-3 top-3">
                   <Button
-                    variant="outline"
-                    size="sm"
+                    variant="ghost"
+                    size="icon"
                     onClick={() => setWorkflowCollapsed(true)}
+                    aria-label="Collapse workflow"
                   >
-                    Collapse
+                    <PanelRightClose className="h-5 w-5" />
                   </Button>
                 </div>
               </div>
@@ -73,15 +75,15 @@ export function AppShell() {
 
       {/* When collapsed, show a small “expand” affordance */}
       {workflowCollapsed && (
-        <button
+        <Button
+          variant="outline"
           onClick={() => setWorkflowCollapsed(false)}
-          className={cn(
-            "fixed right-3 top-3 z-50 rounded-md border bg-background px-3 py-2 text-sm shadow-sm",
-            "hover:bg-accent"
-          )}
+          className={cn("fixed right-3 top-3 z-50")}
+          aria-label="Show workflow"
         >
-          Show workflow
-        </button>
+          <PanelRightOpen className="h-5 w-5" />
+          <span className="ml-0">Show workflow</span>
+        </Button>
       )}
     </div>
   )

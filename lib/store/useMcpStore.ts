@@ -1,11 +1,25 @@
 "use client"
 
-import { create } from "zustand"
+import { create, type StateCreator } from "zustand"
 
-// 1) Add "start" so page.tsx can compare activeWidget === "start"
-export type WidgetId = "start" | "screener" | "dataLibrary" | "exporter"
+import {
+  categoryTree,
+  dataItems,
+  getDescendantCategoryIds,
+  esgBaselineItemIds,
+} from "@/lib/data/dataLibraryMock"
 
-// 2) Workflow steps should NOT include "start"
+// -------------------------
+// Types
+// -------------------------
+
+export type WidgetId =
+  | "start"
+  | "screener"
+  | "dataParameter"
+  | "dataLibrary"
+  | "exporter"
+
 export type WorkflowStepId = Exclude<WidgetId, "start">
 
 export type ChatRole = "user" | "assistant"
@@ -18,10 +32,6 @@ export type ChatMessage = {
 
 export type WorkflowStepStatus = "upcoming" | "current" | "done"
 
-/**
- * UI state for styling cards (NOT the process status).
- * Pressed is handled via CSS `active:` in the button.
- */
 export type WorkflowCardState = "default" | "selected" | "disabled"
 
 export type WorkflowStep = {
@@ -29,19 +39,25 @@ export type WorkflowStep = {
   title: string
   subtitle: string
   status: WorkflowStepStatus
-  /** Third line summary shown when status === "done" */
   summary?: string
 }
 
 export type WidgetFooterVariant = "default" | "progress"
+
+export type FooterAction =
+  | { type: "setActiveWidget"; widget: WidgetId }
+  | { type: "advanceWorkflow"; from: WorkflowStepId; to: WorkflowStepId }
+  | { type: "noop" }
+
 export type WidgetFooterState = {
   variant: WidgetFooterVariant
-  // Keep this as “data”, not ReactNode, so it’s safe in a store
   leftLines?: string[]
   primaryLabel?: string
   secondaryLabel?: string
   primaryDisabled?: boolean
   secondaryDisabled?: boolean
+  primaryAction?: FooterAction
+  secondaryAction?: FooterAction
   progress?: {
     completed: number
     total: number
@@ -50,15 +66,42 @@ export type WidgetFooterState = {
   }
 }
 
+/** Data Parameter (step 2) schema */
+export type DataParameters = {
+  type: "fiscalYear" | "calendarYear"
+  fromYear: number
+  toYear: number
+  displayOrder: "newest" | "oldest"
+  financePeriod: "FY0" | "FY1"
+  rollPeriods: boolean
+  addSource: boolean
+  includePartialYear: boolean
+  serious: boolean
+}
+
+/** Data Library - global parameter schema (kept for compatibility) */
+export type LibraryGlobalParams = {
+  last: number
+  periodType: "FY" | "FQ"
+  displayOrder: "newest" | "oldest"
+  financePeriod: "FY0" | "FY1"
+  rollPeriods: boolean
+  addSource: boolean
+  includePartialYear: boolean
+  serious: boolean
+}
+
+export type LibrarySuggestionState = "pending" | "applied" | "skipped"
+
+// -------------------------
+// Store (combined state type)
+// -------------------------
 export type McpState = {
-
-  //push assistant message
-  addAssistantMessage: (content: string) => void
-
-
   // App
   activeWidget: WidgetId
   setActiveWidget: (id: WidgetId) => void
+  isWidgetLoading: boolean
+  transitionToWidget: (next: WidgetId, opts?: { delayMs?: number }) => void
 
   // Start screen
   startQuery: (text: string) => void
@@ -67,6 +110,7 @@ export type McpState = {
   messages: ChatMessage[]
   isThinking: boolean
   sendMessage: (text: string) => void
+  addAssistantMessage: (content: string) => void
 
   // Workflow panel
   workflowCollapsed: boolean
@@ -75,13 +119,47 @@ export type McpState = {
   workflowSteps: WorkflowStep[]
   setWorkflowStep: (id: WorkflowStepId, patch: Partial<WorkflowStep>) => void
   markStepDone: (id: WorkflowStepId, summary?: string) => void
+  advanceTo: (from: WorkflowStepId, to: WorkflowStepId) => void
 
-  // Widget footer (state in store)
+  // Footer
   footer: WidgetFooterState
   setFooter: (patch: Partial<WidgetFooterState>) => void
   resetFooter: () => void
+  runFooterAction: (action?: FooterAction) => void
+
+  // Data Parameter (step 2)
+  dataParameters: DataParameters
+  suggestedDataParameters: DataParameters
+  setDataParameters: (patch: Partial<DataParameters>) => void
+  applySuggestedDataParameters: () => void
+  resetDataParameters: () => void
+
+  // Data Library
+  librarySelectedIds: string[]
+  librarySuggestedIds: string[]
+  librarySuggestionState: LibrarySuggestionState
+
+  libraryActiveCategoryId?: string
+  libraryActiveItemId?: string
+  librarySearch: string
+  libraryGlobalParams: LibraryGlobalParams
+
+  toggleLibraryItem: (id: string) => void
+  applyLibrarySuggestions: () => void
+  skipLibrarySuggestions: () => void
+  setLibraryActiveCategory: (id?: string) => void
+  setLibraryActiveItem: (id?: string) => void
+  setLibrarySearch: (v: string) => void
+  setLibraryGlobalParam: <K extends keyof LibraryGlobalParams>(
+    k: K,
+    v: LibraryGlobalParams[K]
+  ) => void
+  resetLibrary: () => void
 }
 
+// -------------------------
+// Helpers / initial state
+// -------------------------
 function uid(prefix = "id") {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`
 }
@@ -93,6 +171,12 @@ const initialWorkflowSteps: WorkflowStep[] = [
     subtitle: "Define universe & filters",
     status: "current",
     summary: "Total 12871 companies",
+  },
+  {
+    id: "dataParameter",
+    title: "Data parameter",
+    subtitle: "Time range & options",
+    status: "upcoming",
   },
   {
     id: "dataLibrary",
@@ -108,49 +192,112 @@ const initialWorkflowSteps: WorkflowStep[] = [
   },
 ]
 
-// Keep chat empty until the user clicks Send on StartScreen.
-// (Otherwise you end up with duplicated “default” messages.)
 const initialMessages: ChatMessage[] = []
+const initialFooter: WidgetFooterState = { variant: "default" }
 
-export const useMcpStore = create<McpState>((set, get) => ({
+const initialDataParameters: DataParameters = {
+  type: "fiscalYear",
+  fromYear: 2000,
+  toYear: 2025,
+  displayOrder: "newest",
+  financePeriod: "FY0",
+  rollPeriods: false,
+  addSource: false,
+  includePartialYear: false,
+  serious: true,
+}
 
-  // push assistant message
-  addAssistantMessage: (content) => {
-  const msg: ChatMessage = {
-    id: uid("m"),
-    role: "assistant",
-    content,
-    createdAt: Date.now(),
-  }
-  set((s) => ({ messages: [...s.messages, msg] }))
-},
+const suggestedDataParameters: DataParameters = {
+  ...initialDataParameters,
+  fromYear: 2000,
+  toYear: 2025,
+  type: "fiscalYear",
+}
 
-  // App
+const initialDataParameterState = {
+  dataParameters: { ...initialDataParameters },
+  suggestedDataParameters: { ...suggestedDataParameters },
+}
+
+const initialLibraryGlobalParams: LibraryGlobalParams = {
+  last: 20,
+  periodType: "FY",
+  displayOrder: "newest",
+  financePeriod: "FY0",
+  rollPeriods: false,
+  addSource: false,
+  includePartialYear: false,
+  serious: false,
+}
+
+const initialLibraryState = {
+  // ✅ baseline selected on first load
+  librarySelectedIds: [...esgBaselineItemIds],
+  librarySuggestedIds: [...esgBaselineItemIds],
+
+  // ✅ but NOT "applied" yet (this is the key fix)
+  librarySuggestionState: "pending" as const,
+
+  libraryActiveCategoryId: "esg",
+  libraryActiveItemId: esgBaselineItemIds[0],
+
+  librarySearch: "",
+  libraryGlobalParams: { ...initialLibraryGlobalParams },
+}
+
+// -------------------------
+// Slice creators
+// -------------------------
+type Slice<T> = StateCreator<McpState, [], [], T>
+
+const createAppSlice: Slice<
+  Pick<
+    McpState,
+    | "activeWidget"
+    | "setActiveWidget"
+    | "isWidgetLoading"
+    | "transitionToWidget"
+    | "startQuery"
+  >
+> = (set, get) => ({
   activeWidget: "start",
   setActiveWidget: (id) => set(() => ({ activeWidget: id })),
+  isWidgetLoading: false,
 
-  // Start screen
+  transitionToWidget: (next, opts) => {
+    const delayMs = opts?.delayMs ?? 600
+    set({ isWidgetLoading: true })
+    window.setTimeout(() => {
+      set({ activeWidget: next, isWidgetLoading: false })
+    }, delayMs)
+  },
+
   startQuery: (text) => {
     const trimmed = text.trim()
     if (!trimmed) return
 
-    // Reset “session” state when starting
     set(() => ({
       activeWidget: "screener",
       workflowCollapsed: false,
       workflowSteps: initialWorkflowSteps.map((s) => ({ ...s })),
-      footer: { variant: "default" },
-      messages: [],
+      footer: { ...initialFooter },
+      messages: [...initialMessages],
       isThinking: false,
+      isWidgetLoading: false,
+      ...initialDataParameterState,
+      ...initialLibraryState,
     }))
 
-    // Reuse the existing chat pipeline
     get().sendMessage(trimmed)
   },
+})
 
-  // Chat
+const createChatSlice: Slice<
+  Pick<McpState, "messages" | "isThinking" | "sendMessage" | "addAssistantMessage">
+> = (set) => ({
   messages: initialMessages,
   isThinking: false,
+
   sendMessage: (text) => {
     const trimmed = text.trim()
     if (!trimmed) return
@@ -167,7 +314,6 @@ export const useMcpStore = create<McpState>((set, get) => ({
       isThinking: true,
     }))
 
-    // Demo “assistant response”
     setTimeout(() => {
       const assistantMsg: ChatMessage = {
         id: uid("m"),
@@ -175,6 +321,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
         content: "Noted — updating the widget based on your request.",
         createdAt: Date.now(),
       }
+
       set((s) => ({
         messages: [...s.messages, assistantMsg],
         isThinking: false,
@@ -182,13 +329,34 @@ export const useMcpStore = create<McpState>((set, get) => ({
     }, 600)
   },
 
-  // Workflow panel
-  workflowCollapsed: false,
-  setWorkflowCollapsed: (next) => set(() => ({ workflowCollapsed: next })),
-  toggleWorkflow: () =>
-    set((s) => ({ workflowCollapsed: !s.workflowCollapsed })),
+  addAssistantMessage: (content) => {
+    const msg: ChatMessage = {
+      id: uid("m"),
+      role: "assistant",
+      content,
+      createdAt: Date.now(),
+    }
+    set((s) => ({ messages: [...s.messages, msg] }))
+  },
+})
 
-  workflowSteps: initialWorkflowSteps,
+const createWorkflowSlice: Slice<
+  Pick<
+    McpState,
+    | "workflowCollapsed"
+    | "setWorkflowCollapsed"
+    | "toggleWorkflow"
+    | "workflowSteps"
+    | "setWorkflowStep"
+    | "markStepDone"
+    | "advanceTo"
+  >
+> = (set) => ({
+  workflowCollapsed: false,
+  workflowSteps: initialWorkflowSteps.map((s) => ({ ...s })),
+
+  setWorkflowCollapsed: (next) => set(() => ({ workflowCollapsed: next })),
+  toggleWorkflow: () => set((s) => ({ workflowCollapsed: !s.workflowCollapsed })),
 
   setWorkflowStep: (id, patch) =>
     set((s) => ({
@@ -201,20 +369,149 @@ export const useMcpStore = create<McpState>((set, get) => ({
     set((s) => ({
       workflowSteps: s.workflowSteps.map((step) =>
         step.id === id
-          ? {
-              ...step,
-              status: "done",
-              summary: summary ?? step.summary,
-            }
+          ? { ...step, status: "done", summary: summary ?? step.summary }
           : step
       ),
     })),
 
-  // Footer
-  footer: { variant: "default" },
-  setFooter: (patch) =>
+  advanceTo: (from, to) =>
     set((s) => ({
-      footer: { ...s.footer, ...patch },
+      workflowSteps: s.workflowSteps.map((step) => {
+        if (step.id === from) return { ...step, status: "done" }
+        if (step.id === to) return { ...step, status: "current" }
+        return step
+      }),
+      activeWidget: to,
     })),
-  resetFooter: () => set(() => ({ footer: { variant: "default" } })),
+})
+
+const createFooterSlice: Slice<
+  Pick<McpState, "footer" | "setFooter" | "resetFooter" | "runFooterAction">
+> = (set, get) => ({
+  footer: { ...initialFooter },
+
+  setFooter: (patch) => set((s) => ({ footer: { ...s.footer, ...patch } })),
+  resetFooter: () => set(() => ({ footer: { ...initialFooter } })),
+
+  runFooterAction: (action) => {
+    if (!action || action.type === "noop") return
+
+    if (action.type === "setActiveWidget") {
+      get().transitionToWidget(action.widget, { delayMs: 600 })
+      return
+    }
+
+    if (action.type === "advanceWorkflow") {
+      set((s) => ({
+        workflowSteps: s.workflowSteps.map((step) => {
+          if (step.id === action.from) return { ...step, status: "done" }
+          if (step.id === action.to) return { ...step, status: "current" }
+          return step
+        }),
+      }))
+      get().transitionToWidget(action.to, { delayMs: 600 })
+      return
+    }
+
+    const _exhaustive: never = action
+    return _exhaustive
+  },
+})
+
+const createDataParameterSlice: Slice<
+  Pick<
+    McpState,
+    | "dataParameters"
+    | "suggestedDataParameters"
+    | "setDataParameters"
+    | "applySuggestedDataParameters"
+    | "resetDataParameters"
+  >
+> = (set) => ({
+  ...initialDataParameterState,
+
+  setDataParameters: (patch) =>
+    set((s) => ({ dataParameters: { ...s.dataParameters, ...patch } })),
+
+  applySuggestedDataParameters: () =>
+    set((s) => ({ dataParameters: { ...s.suggestedDataParameters } })),
+
+  resetDataParameters: () => set(() => ({ dataParameters: { ...initialDataParameters } })),
+})
+
+const createDataLibrarySlice: Slice<
+  Pick<
+    McpState,
+    | "librarySelectedIds"
+    | "librarySuggestedIds"
+    | "librarySuggestionState"
+    | "libraryActiveCategoryId"
+    | "libraryActiveItemId"
+    | "librarySearch"
+    | "libraryGlobalParams"
+    | "toggleLibraryItem"
+    | "applyLibrarySuggestions"
+    | "skipLibrarySuggestions"
+    | "setLibraryActiveCategory"
+    | "setLibraryActiveItem"
+    | "setLibrarySearch"
+    | "setLibraryGlobalParam"
+    | "resetLibrary"
+  >
+> = (set) => ({
+  ...initialLibraryState,
+
+  toggleLibraryItem: (id) =>
+    set((s) => {
+      const has = s.librarySelectedIds.includes(id)
+      const next = has
+        ? s.librarySelectedIds.filter((x) => x !== id)
+        : [...s.librarySelectedIds, id]
+      const nextActive = s.libraryActiveItemId ?? id
+      return { librarySelectedIds: next, libraryActiveItemId: nextActive }
+    }),
+
+  // ✅ this now means “user explicitly confirmed / applied suggestion”
+  applyLibrarySuggestions: () =>
+    set((s) => {
+      if (s.librarySuggestedIds.length === 0) {
+        return { librarySuggestionState: "applied" }
+      }
+      const merged = new Set([...s.librarySelectedIds, ...s.librarySuggestedIds])
+      return {
+        librarySelectedIds: Array.from(merged),
+        librarySuggestionState: "applied",
+      }
+    }),
+
+  // ✅ skip = empty selection + hide suggestion actions
+  skipLibrarySuggestions: () =>
+    set(() => ({
+      librarySelectedIds: [],
+      librarySuggestedIds: [],
+      librarySuggestionState: "skipped",
+      libraryActiveItemId: undefined,
+    })),
+
+  setLibraryActiveCategory: (id) => set(() => ({ libraryActiveCategoryId: id })),
+  setLibraryActiveItem: (id) => set(() => ({ libraryActiveItemId: id })),
+  setLibrarySearch: (v) => set(() => ({ librarySearch: v })),
+
+  setLibraryGlobalParam: (k, v) =>
+    set((s) => ({ libraryGlobalParams: { ...s.libraryGlobalParams, [k]: v } })),
+
+  // ✅ restore defaults = baseline selected again, but still "pending"
+  resetLibrary: () => set(() => ({ ...initialLibraryState })),
+})
+
+// -------------------------
+// Store creation
+// -------------------------
+export const useMcpStore = create<McpState>()((set, get, store) => ({
+  ...createChatSlice(set, get, store),
+  ...createWorkflowSlice(set, get, store),
+  ...createFooterSlice(set, get, store),
+  ...createDataParameterSlice(set, get, store),
+  ...createDataLibrarySlice(set, get, store),
+  ...createAppSlice(set, get, store),
 }))

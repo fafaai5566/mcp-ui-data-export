@@ -48,6 +48,7 @@ export function WidgetLayout({
     const layoutScroll = scroll === "layout"
 
   const footerState = useMcpStore((s) => s.footer)
+  const runFooterAction = useMcpStore((s) => s.runFooterAction)
 
   const storeFooterLeft =
     footerState?.leftLines && footerState.leftLines.length > 0 ? (
@@ -67,13 +68,17 @@ export function WidgetLayout({
           <Button
             variant="secondary"
             disabled={!!footerState.secondaryDisabled}
+            onClick={() => runFooterAction(footerState.secondaryAction)}
           >
             {footerState.secondaryLabel}
           </Button>
         ) : null}
 
         {footerState.primaryLabel ? (
-          <Button disabled={!!footerState.primaryDisabled}>
+          <Button
+            disabled={!!footerState.primaryDisabled}
+            onClick={() => runFooterAction(footerState.primaryAction)}
+          >
             {footerState.primaryLabel}
           </Button>
         ) : null}
@@ -100,17 +105,22 @@ export function WidgetLayout({
           ) : null}
         </div>
 
-        {callout ? <div className="px-8 pb-8 pt-6">{callout}</div> : null}
+        {callout ? <div className="px-8 pb-4 pt-4">{callout}</div> : null}
       </div>
 
       {/* Body */}
-      <div className="flex-1 min-h-0 overflow-auto px-8">
-      {children}
-    </div>
+      <div
+  className={cn(
+    "flex-1 min-h-0 px-8",
+    layoutScroll ? "overflow-hidden" : "overflow-auto"
+  )}
+>
+  {children}
+</div>
 
       {/* Footer */}
       {shouldShowFooter ? (
-        <div className="shrink-0 pt-8 px-8 pb-8">
+        <div className="shrink-0 pt-4 px-8 pb-8">
           {footer ? (
             footer
           ) : (

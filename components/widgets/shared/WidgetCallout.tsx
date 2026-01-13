@@ -29,11 +29,11 @@ export function WidgetCallout({
 }: WidgetCalloutProps) {
   const rootClass =
     variant === "subtle"
-      ? "rounded-2xl border bg-sky-50/60 p-6"
-      : "rounded-2xl border bg-sky-50/60 p-6"
+      ? "rounded-xl border bg-sky-50/60 p-4"
+      : "rounded-xl border bg-sky-50/60 p-4"
 
   return (
-    <section className={cn(rootClass, "shadow-sm", className)}>
+    <section className={cn(rootClass, "shadow-none", className)}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-lg font-semibold leading-6">{title}</div>

@@ -33,12 +33,19 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator"
 
 import { CheckCircle2 } from "lucide-react"
-import { useMcpStore } from "@/lib/store/useMcpStore"
+import { useMcpStore, type FooterAction } from "@/lib/store/useMcpStore"
 
 
 
 
 type Option = { label: string; value: string }
+
+const NEXT_CTA_LABEL = "Next – Data parameters" // alt: "Next – Set time range"
+const NEXT_CTA_ACTION: FooterAction = {
+  type: "advanceWorkflow",
+  from: "screener",
+  to: "dataParameter",
+}
 
 function FieldRow({
   label,
@@ -169,11 +176,15 @@ export function ScreenerWidget() {
   setSuggestionsSkipped(false)
   setAppliedCount(null)
   setWorkflowStep("screener", { status: "current", summary: undefined })
+setWorkflowStep("dataParameter", { status: "upcoming", summary: undefined })
 
   setFooter({
-    primaryLabel: "Next - Select variables",
-    primaryDisabled: true,
-  })
+  primaryLabel: NEXT_CTA_LABEL,
+  primaryDisabled: true,
+  primaryAction: NEXT_CTA_ACTION,
+})
+
+
 }
 
 
@@ -203,8 +214,9 @@ export function ScreenerWidget() {
 
   // disable CTA again until re-applied
   setFooter({
-    primaryLabel: "Next - Select variables",
+    primaryLabel: NEXT_CTA_LABEL,
     primaryDisabled: true,
+    primaryAction: NEXT_CTA_ACTION,
   })
 
   setVisibleChipIds((prev) => prev.filter((x) => x !== chipId))
@@ -217,6 +229,14 @@ export function ScreenerWidget() {
   // optional but nice: keep workflow in sync
   const markStepDone = useMcpStore((s) => s.markStepDone)
   const setWorkflowStep = useMcpStore((s) => s.setWorkflowStep)
+  const workflowSteps = useMcpStore((s) => s.workflowSteps)
+  
+  const hasVisitedLaterStep = React.useMemo(() => {
+    const screenerIndex = workflowSteps.findIndex((x) => x.id === "screener")
+    return workflowSteps.some(
+      (step, i) => i > screenerIndex && step.status !== "upcoming"
+    )
+  }, [workflowSteps])
 
   const [appliedCount, setAppliedCount] = React.useState<number | null>(null)
   const showRestoreDefaults =
@@ -238,20 +258,23 @@ const onApplyCriteria = () => {
   // Enable footer CTA (if you’re using store-driven footer)
   setFooter({
     leftLines: [`Total ${totalCompanies} companies`],
-    primaryLabel: "Next – Select variables",
+    primaryLabel: NEXT_CTA_LABEL,
     primaryDisabled: false,
+    primaryAction: NEXT_CTA_ACTION,
   })
 
-  markStepDone("screener", `Total ${totalCompanies} companies`)
+ setWorkflowStep("screener", { status: "current", summary: `Total ${totalCompanies} companies` })
+
 
   addAssistantMessage(
-    [
-      `✅ Applied **${count} criteria**.`,
-      "",
-      "Next, click **Next – Select variables** to choose the ESG fields to export.",
-      "You can always use **Restore defaults** to go back to the suggested setup.",
-    ].join("\n")
-  )
+  [
+    `✅ Applied **${count} criteria**.`,
+    "",
+    "Next, click **Next – Data parameters** to set the time range and options.",
+    "You can always use **Restore defaults** to go back to the suggested setup.",
+  ].join("\n")
+)
+
 }
 
 
@@ -316,10 +339,12 @@ const onApplyCriteria = () => {
 React.useEffect(() => {
   setFooter({
     leftLines: [`Total ${totalCompanies} companies`],
-    primaryLabel: "Next – Select variables",
+    primaryLabel: NEXT_CTA_LABEL,
     primaryDisabled: appliedCount === null,
+    primaryAction: NEXT_CTA_ACTION,
   })
 }, [appliedCount, setFooter, totalCompanies])
+
 
 //End useEffect
 
@@ -341,85 +366,95 @@ React.useEffect(() => {
       <WidgetLayout
         title="Screener"
         description="Define the company universe and filters."
-                callout={
-  (() => {
-    const showApplied = appliedCount !== null
-    const showHeaderOnly = suggestionsSkipped || chips.length === 0
+                callout={(() => {
+  const isApplied = appliedCount !== null
+  const isSkipped = suggestionsSkipped
+  const noChips = chips.length === 0
 
-    const restoreDefaultsChip = showRestoreDefaults ? (
-      <button
-        type="button"
-        onClick={restoreDefaults}
-        className="inline-flex items-center rounded-full border bg-background px-3 py-1 text-xs font-medium hover:bg-muted"
-      >
-        Restore defaults
-      </button>
-    ) : null
+  const restoreDefaultsChip = (
+    <button
+      type="button"
+      onClick={restoreDefaults}
+      className="inline-flex items-center rounded-full border bg-background px-3 py-1 text-xs font-medium hover:bg-muted"
+    >
+      Restore defaults
+    </button>
+  )
 
-    // 1) Applied state: compact bar + restore defaults (like your screenshot)
-    if (showApplied) {
-      return (
-        <WidgetCallout
-          variant="subtle"
-          headerOnly
-          title={
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="h-6 w-6" />
-              <span className="text-lg font-semibold">
-                Applied {appliedCount} criteria
-              </span>
-            </div>
-          }
-          headerRight={restoreDefaultsChip}
-        />
-      )
-    }
+  // ✅ When user comes BACK from later steps, show only Restore defaults.
+  // Title depends on whether they had applied suggestions before.
+  if (hasVisitedLaterStep) {
+    return (
+      <WidgetCallout
+        title={isApplied ? "Applied suggestion" : "Suggested criteria"}
+        headerOnly
+        headerRight={restoreDefaultsChip}
+      />
+    )
+  }
 
-    // 2) Skipped OR no chips: header-only "Suggested criteria" + restore defaults
-    if (showHeaderOnly) {
-      return (
-        <WidgetCallout
-          title="Suggested criteria"
-          headerOnly
-          headerRight={restoreDefaultsChip}
-        />
-      )
-    }
+  // ✅ Applied state (after clicking "Apply X criteria")
+  if (isApplied) {
+    return (
+      <WidgetCallout
+        variant="subtle"
+        headerOnly
+        title={
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="h-6 w-6" />
+            <span className="text-lg font-semibold">Applied suggestion</span>
+          </div>
+        }
+        headerRight={restoreDefaultsChip}
+      />
+    )
+  }
 
-    // 3) Default state: full callout with chips + apply/skip
+  // ✅ Skipped OR removed all chips => header-only + Restore defaults
+  if (isSkipped || noChips) {
     return (
       <WidgetCallout
         title="Suggested criteria"
-        badges={
-          <SuggestionChips
-            chips={chips}
-            onRemove={onRemoveChip}
-            onJump={onJumpTo}
-            after={restoreDefaultsChip}
-          />
-        }
-        left={
-          <span className="font-medium text-foreground">
-            Total {totalCompanies} companies
-          </span>
-        }
-        right={
-          <>
-            <Button disabled={chips.length === 0} onClick={onApplyCriteria}>
-              Apply {chips.length} criteria
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setSuggestionsSkipped(true)}
-            >
-              Skip suggestions
-            </Button>
-          </>
-        }
+        headerOnly
+        headerRight={restoreDefaultsChip}
       />
     )
-  })()
-}
+  }
+
+  // ✅ Default state (first time): NO restore defaults button
+  return (
+    <WidgetCallout
+      title="Suggested criteria"
+      badges={
+        <SuggestionChips
+          chips={chips}
+          onRemove={onRemoveChip}
+          onJump={onJumpTo}
+          // ❌ don't pass restoreDefaults as a chip "after" item
+        />
+      }
+      left={
+        <span className="font-medium text-foreground">
+          Total {totalCompanies} companies
+        </span>
+      }
+      right={
+        <>
+          <Button disabled={chips.length === 0} onClick={onApplyCriteria}>
+            Apply {chips.length} criteria
+          </Button>
+          <Button variant="secondary" onClick={() => setSuggestionsSkipped(true)}>
+            Skip suggestions
+          </Button>
+        </>
+      }
+    />
+  )
+})()}
+
+
+  
+
 
 
 

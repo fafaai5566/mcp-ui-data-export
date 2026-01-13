@@ -27,7 +27,7 @@ export function SuggestionChips({ chips, onRemove, onJump, className, after }: P
         <div
           key={chip.id}
           className={cn(
-            "inline-flex items-center overflow-hidden rounded-full border bg-background shadow-sm"
+            "inline-flex items-center overflow-hidden rounded-full border bg-background shadow-none"
           )}
           
         >
