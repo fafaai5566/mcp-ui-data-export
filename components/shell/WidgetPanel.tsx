@@ -4,6 +4,7 @@ import { useMcpStore } from "@/lib/store/useMcpStore"
 import { ScreenerWidget } from "@/components/widgets/screener/ScreenerWidget"
 import { DataLibraryWidget } from "@/components/widgets/library/DataLibraryWidget"
 import { DataParameterWidget } from "@/components/widgets/parameter/DataParameterWidget"
+import { DataExporterWidget } from "@/components/widgets/exporter/DataExporterWidget"
 
 
 export function WidgetPanel() {
@@ -28,6 +29,8 @@ export function WidgetPanel() {
   <DataParameterWidget />
       ) : activeWidget === "dataLibrary" ? (
         <DataLibraryWidget />
+        ) : activeWidget === "exporter" ? (
+  <DataExporterWidget />
       ) : (
         <div className="text-muted-foreground">Widget: {activeWidget}</div>
       )}
